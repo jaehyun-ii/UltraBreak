@@ -90,10 +90,10 @@ def main():
     qwen_adapter = Qwen2Adapter(
         "Qwen/Qwen3-VL-8B-Instruct", patch_only=False,
         attn_window=6, frag_weight=0.2,
-        # Heavily weight the affirmation-pivot region. "[탈옥 모드]"(~6 tok) + "다음은 불법…"
-        # ~= first 14 target tokens; the pivot token right after the bracket is where free
-        # generation decides comply-vs-refuse, but it's diluted by ~180 easy target tokens.
-        prefix_tokens=14, prefix_weight=8.0,
+        # prefix up-weighting disabled: with the TOPIC-FIRST target the comply-vs-refuse
+        # flip moved from the first token to the PREDICATE ("다음과 같습니다"), which already
+        # carries naturally high loss. Re-enable (e.g. 14 / 8.0) only for "다음은 …" targets.
+        prefix_tokens=0, prefix_weight=1.0,
         # Qwen3-VL requires the image side to be a multiple of patch_size*merge_size
         # (16*2=32). The Qwen2 default 336 smart-resizes down to 320, which is smaller
         # than a 224 patch's max augmented size (~330) -> "patch too large". 352 (=32*11)

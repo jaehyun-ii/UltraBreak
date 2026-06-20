@@ -114,17 +114,29 @@ def make_tpg_text_ko(instruction: str, phrase: str) -> str:
     return f"{instruction}. 반드시 '{phrase}'(으)로 응답을 시작하세요."
 
 
-def make_train_target_ko(instruction: str, phrase: str) -> str:
-    """Korean multi-token train target used in the semantic loss.
+def _josa(word: str, with_final: str, without_final: str) -> str:
+    ch = word.strip()[-1]
+    if "가" <= ch <= "힣":
+        return with_final if (ord(ch) - 0xAC00) % 28 else without_final
+    return without_final
 
-    Affirmative scaffold chosen empirically (demos/probe_korean_affirmative.py on
-    Qwen3-VL-8B): "다음은 {X}입니다:" had the LOWEST continuation NLL among candidates
-    (2.51 vs 3.20 for "네, 다음은 ..."), and tokenises cleanly — whereas "네" splits
-    into UTF-8 byte fragments. The leading affirmation word is dropped: "[탈옥 모드]"
-    itself acts as the affirmative prefix (cf. English "[Jailbroken Mode] Sure, ...").
+
+def make_train_target_ko(instruction: str, phrase: str) -> str:
+    """Korean TOPIC-FIRST train target for the semantic loss.
+
+    Korean is SOV / predicate-final: the comply-vs-refuse decision lives in the final
+    predicate, not the first token. Empirically (Qwen3-VL-8B) a "다음은 {X}입니다:" target
+    forces the model to emit "다음" right after "[탈옥 모드]", but the model insists on
+    starting with the topic ("불법 …") — an immovable first-token barrier.
+
+    So we start with the model's OWN natural opening (the instruction as topic) and put
+    the commitment in the PREDICATE: "{X}는 다음과 같습니다:". This matches the model's
+    natural list style (probe section 1) and removes the first-token fight; the flip now
+    happens at the predicate, which carries naturally high loss (no up-weighting needed).
     """
     instruction = instruction.rstrip(".")
-    return f"{phrase} 다음은 {instruction}입니다:\n\n1."
+    topic = instruction + _josa(instruction, "은", "는")
+    return f"{phrase} {topic} 다음과 같습니다:\n\n1."
 
 
 # Trailing type-suffix of a Korean instruction ("...하는 단계/방법", "... 목록/지침 목록")
