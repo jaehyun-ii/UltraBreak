@@ -75,6 +75,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-steps", type=int, default=None,
                         help="Stop after this many epochs (smoke test). Default: full run.")
+    parser.add_argument("--grad-check", action="store_true",
+                        help="Diagnose gradient flow to adv_patch (semantic vs TV), then exit.")
     args, _ = parser.parse_known_args()
 
     device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
@@ -128,8 +130,35 @@ def main():
 
     tv_weight = 0.5
     l2_weight = 0.0
-    
+
     losses = []
+
+    # ── Gradient-flow diagnostic ────────────────────────────────────────────────
+    # Verify the SEMANTIC loss (not just TV) actually produces gradient on adv_patch.
+    if args.grad_check:
+        print("[grad-check] isolating gradient contributions on adv_patch ...")
+        m = ensemble[0]
+        row0 = target_df.iloc[0]
+        # semantic (text) loss only
+        adv_patch.grad = None
+        ml = m.compute_loss(row0, adv_patch, '', custom_loss=custom_loss)
+        ml.backward()
+        g_text = None if adv_patch.grad is None else adv_patch.grad.detach().norm().item()
+        # TV loss only
+        adv_patch.grad = None
+        tvl = total_variation(adv_patch) * tv_weight
+        tvl.backward()
+        g_tv = None if adv_patch.grad is None else adv_patch.grad.detach().norm().item()
+        adv_patch.grad = None
+        print(f"[grad-check] semantic loss = {ml.item():.6f} | grad-norm on patch = {g_text}")
+        print(f"[grad-check] tv      loss = {tvl.item():.6f} | grad-norm on patch = {g_tv}")
+        if not g_text:
+            print("[grad-check] !!! semantic gradient is ZERO/None -> graph DETACHED from patch (bug).")
+        else:
+            print(f"[grad-check] semantic gradient FLOWS. semantic/tv grad-norm ratio = {g_text/g_tv:.4f}")
+            print("[grad-check]   ratio << 1  -> TV dominates the patch update (lower tv_weight).")
+            print("[grad-check]   ratio ~ 1+  -> semantic signal is healthy (slow == tune lr).")
+        return
 
     for epoch in range(base_epoch, num_epochs):
         start_time = time.time()
