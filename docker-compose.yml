@@ -1,0 +1,48 @@
+# UltraBreak GPU runtime (H100). Requires the NVIDIA Container Toolkit on the host.
+#
+# Usage:
+#   docker compose build
+#   docker compose run --rm ultrabreak python optimisation/optimise.py
+#   docker compose run --rm ultrabreak python evaluation/attack.py
+#   docker compose run --rm ultrabreak python evaluation/evaluate.py
+#
+# SHARED SERVER: expose ONLY your allocated GPUs to the container via
+# NVIDIA_VISIBLE_DEVICES (host indices). e.g. you were allocated 4,5,6,7:
+#   NVIDIA_VISIBLE_DEVICES=4,5,6,7 docker compose run --rm ultrabreak python optimisation/optimise.py
+# Or put `NVIDIA_VISIBLE_DEVICES=4,5,6,7` in .env (compose reads it automatically).
+# Default is `all` — DO NOT use the default on a shared box.
+services:
+  ultrabreak:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ultrabreak:latest
+    # Optional API keys for closed-source eval (GPT/Gemini/Claude); .env is optional.
+    env_file:
+      - path: .env
+        required: false
+    # The NVIDIA Container Toolkit reads NVIDIA_VISIBLE_DEVICES to decide which
+    # physical GPUs are mounted into the container. Inside, they are renumbered
+    # from 0 (so 4,5,6,7 appear as cuda:0..3).
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - HF_HOME=/cache/huggingface
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Live source + read/write of configs and results on the host
+      - ./:/app
+      # Persist downloaded model weights across runs (Qwen3-VL-8B etc.)
+      - hf-cache:/cache/huggingface
+    # Large shared memory for dataloaders / multi-process tensor ops
+    shm_size: "16gb"
+    ipc: host
+    # GPU selection is handled by runtime: nvidia + NVIDIA_VISIBLE_DEVICES above.
+    # (deploy.resources count:all is intentionally NOT used — it would grab every
+    # GPU on a shared server.)
+    # Keep the default run as the optimisation entrypoint; override per-command.
+    command: ["python", "optimisation/optimise.py"]
+
+volumes:
+  hf-cache:

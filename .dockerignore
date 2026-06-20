@@ -1,0 +1,21 @@
+# Keep the build context small. At runtime docker-compose bind-mounts the repo,
+# so these are still available when running via compose — this only trims what
+# gets baked into the image.
+.git
+**/__pycache__/
+**/*.pyc
+.env
+
+# Heavy media / generated artifacts not needed to build the image
+figures/
+images/
+docs/
+demos/
+outputs/
+results/
+
+# Model weights live on the hf-cache volume, never in the image
+*.safetensors
+*.bin
+*.pt
+*.pth

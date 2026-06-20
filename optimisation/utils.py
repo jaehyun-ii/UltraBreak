@@ -140,9 +140,22 @@ def sinusoidal_positional_encoding(seq_len, dim):
 
 
 
-def semantic_similarity_loss(logits, labels, embedding_matrix, weights = None, mode="token", ignore_index=-100, verbose=False):
+def semantic_similarity_loss(logits, labels, embedding_matrix, weights = None, mode="token", ignore_index=-100,
+                             window=None, byte_frag=None, frag_weight=1.0, verbose=False):
         """
         Compute semantic similarity loss between predicted token distributions and target tokens.
+
+        Args (Korean-tuning extras, attention mode only):
+            window (int|None): local causal attention window. Each query position attends
+                only to target tokens j in [t, t+window] instead of all future tokens. With
+                Korean's syllable-level tokenisation, a small window (~one 어절) aggregates
+                syllable tokens into word-level semantics without sentence-wide drift.
+                None => original full-causal behaviour.
+            byte_frag (BoolTensor[B, T]|None): True where a target token is a UTF-8 byte
+                fragment ('�'). Such tokens are excluded from being attended to, and their
+                query positions are down-weighted in the loss. None => disabled.
+            frag_weight (float): loss weight applied to byte-fragment query positions
+                (1.0 = unchanged, 0.0 = ignored). Default 1.0 keeps original behaviour.
 
         Returns:
             scalar loss
@@ -150,6 +163,8 @@ def semantic_similarity_loss(logits, labels, embedding_matrix, weights = None, m
         # Shift for next-token prediction
         logits = logits[:, :-1, :]         # [B, T-1, V]
         labels = labels[:, 1:]             # [B, T-1]
+        if byte_frag is not None:
+            byte_frag = byte_frag[:, 1:]   # align with shifted labels -> [B, T-1]
         B, T, V = logits.size()
         D = embedding_matrix.size(1)
         # Compute probabilities
@@ -205,15 +220,25 @@ def semantic_similarity_loss(logits, labels, embedding_matrix, weights = None, m
             attn_scores = torch.bmm(pred_norm, tgt_norm.transpose(1, 2))  # dot-product sim
             attn_scores = attn_scores / tau  # apply temperature
             
-            # Make a causal mask: shape [T, T], upper triangular = True
+            # Make a causal mask: shape [T, T], entry [i, j] True iff j >= i.
+            # With `window`, additionally require j <= i + window (local band).
             T = labels.size(1)
-            causal_mask = torch.triu(torch.ones((T, T), device=labels.device)).bool()  # lower triangle
+            if window is None:
+                causal_mask = torch.triu(torch.ones((T, T), device=labels.device)).bool()
+            else:
+                r = torch.arange(T, device=labels.device)
+                causal_mask = (r.unsqueeze(0) >= r.unsqueeze(1)) & (r.unsqueeze(0) <= r.unsqueeze(1) + window)
             # Expand to batch: [B, T, T]
             causal_mask = causal_mask.unsqueeze(0).expand(labels.size(0), -1, -1)
-            
+
             # Combine causal mask with padding mask for target
-            # padding_mask: True = valid token, False = pad
-            padding_mask = mask.bool().unsqueeze(1).expand(-1, T, -1)  # [B, T, T]
+            # padding_mask: True = valid token, False = pad.
+            # Byte-fragment target tokens ('�') carry ~no semantics, so exclude them
+            # from being attended to as well.
+            target_valid = mask.bool()
+            if byte_frag is not None:
+                target_valid = target_valid & (~byte_frag)
+            padding_mask = target_valid.unsqueeze(1).expand(-1, T, -1)  # [B, T, T]
             
             # Final mask: True = keep, False = mask
             final_mask = causal_mask & padding_mask
@@ -233,9 +258,13 @@ def semantic_similarity_loss(logits, labels, embedding_matrix, weights = None, m
             # Cosine similarity between prediction and attended target
             sim = F.cosine_similarity(expected_embeddings, attended_targets, dim=-1) # [B, T]
             #print(sim)
-            # Apply mask and compute mean loss
-            sim = sim * mask
-            loss = ((1 - sim) * mask).sum() / mask.sum()
+            # Per-position loss weight: valid-token mask, with byte-fragment query
+            # positions down-weighted by `frag_weight`.
+            w = mask
+            if byte_frag is not None and frag_weight != 1.0:
+                frag_mult = torch.where(byte_frag, sim.new_tensor(frag_weight), sim.new_tensor(1.0))
+                w = w * frag_mult
+            loss = ((1 - sim) * w).sum() / w.sum().clamp_min(1e-8)
 
             if verbose:
                 batch_idx = 0  # first element in batch
@@ -257,6 +286,10 @@ def semantic_similarity_loss(logits, labels, embedding_matrix, weights = None, m
                 print(f"tau:{tau}")
                 print(f"alpha:{alpha}")
                 print(f"epsilon:{epsilon}")
+                print(f"window:{window}")
+                print(f"frag_weight:{frag_weight}")
+                if byte_frag is not None:
+                    print(f"byte_frag tokens (this sample):{int(byte_frag[batch_idx].sum().item())}/{byte_frag.size(1)}")
             
         else:
             raise ValueError("mode must be 'token' or 'attention'")

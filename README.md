@@ -160,6 +160,12 @@ cd UltraBreak
 pip install -r requirements.txt
 ```
 
+> **Docker (GPU, H100):** Prefer a reproducible container? See [DOCKER.md](DOCKER.md).
+> ```bash
+> docker compose build
+> docker compose run --rm ultrabreak python optimisation/optimise.py
+> ```
+
 ### 2. Optimisation
 ```bash
 python optimisation/optimise.py

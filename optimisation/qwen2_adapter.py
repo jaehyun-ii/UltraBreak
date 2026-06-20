@@ -16,12 +16,20 @@ OPENAI_CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 class Qwen2Adapter(BaseModelAdapter):
     def load(self, model_id):
         processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-        if model_id == "Qwen/Qwen2.5-VL-7B-Instruct":
+        if "Qwen3-VL" in model_id:
+            # Qwen3-VL uses a dedicated model class (requires transformers >= 4.57)
+            from transformers import Qwen3VLForConditionalGeneration
+            model = Qwen3VLForConditionalGeneration.from_pretrained(
+                model_id, torch_dtype="auto", device_map="auto"
+            )
+            print("initialising qwen3-vl model!!!  ")
+
+        elif model_id == "Qwen/Qwen2.5-VL-7B-Instruct":
             model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 model_id, torch_dtype="auto", device_map="auto"
             )
             print("initialising qwen2.5 model!!!  ")
-        
+
         else:
             model = Qwen2VLForConditionalGeneration.from_pretrained(
                 model_id, torch_dtype="auto", device_map="auto"
@@ -116,14 +124,34 @@ class Qwen2Adapter(BaseModelAdapter):
             torch.linspace(1, 0, steps=target_ids.size(1), device='cuda')
         ], dim=0)
 
+        # byte_frag[0, p] = True when target token p decodes to an incomplete UTF-8
+        # sequence ('�'), i.e. a byte fragment of a rare Korean syllable.
+        byte_frag = torch.zeros_like(labels, dtype=torch.bool)
+        # Substring keyword matching: a single CJK/Korean keyword spans several BPE
+        # tokens, so exact "token == keyword" never fires. Instead boost any token
+        # whose decoded text is a substring of the space-joined keyword blob.
+        keyword_blob = "".join("".join(k.split()) for k in keywords).lower()
         for i, tid in enumerate(target_ids[0]):
-            token_str = self.processor.tokenizer.decode([tid.item()]).lower()
-            if "".join(char for char in token_str if char.isalpha()) in keywords:
+            token_str = self.processor.tokenizer.decode([tid.item()])
+            if "�" in token_str:
+                byte_frag[0, prompt_len + i] = True
+            tok_alpha = "".join(char for char in token_str.lower() if char.isalpha())
+            if tok_alpha and tok_alpha in keyword_blob:
                 weights[prompt_len + i] += 1.0
 
-        return input_ids, labels, pixel_values, image_grid_thw, attention_mask, weights
+        return input_ids, labels, pixel_values, image_grid_thw, attention_mask, weights, byte_frag
 
-    def preprocess_patched(self, patched_tensor, image_grid_thw, temporal_patch_size=2, patch_size=14, merge_size=2):
+    def preprocess_patched(self, patched_tensor, image_grid_thw, temporal_patch_size=None, patch_size=None, merge_size=None):
+        # Read patch geometry from the processor so this works across Qwen2-VL
+        # (patch_size=14) and Qwen3-VL (patch_size=16) without hardcoding.
+        image_processor = self.processor.image_processor
+        if temporal_patch_size is None:
+            temporal_patch_size = image_processor.temporal_patch_size
+        if patch_size is None:
+            patch_size = image_processor.patch_size
+        if merge_size is None:
+            merge_size = image_processor.merge_size
+
         (grid_t, grid_h, grid_w) = image_grid_thw
 
         # pytorch version 
@@ -169,7 +197,14 @@ class Qwen2Adapter(BaseModelAdapter):
         if self.patch_only:
             empty_img = torch.full((3, self.patch_size[0], self.patch_size[1]), -1.0, device=patch.device, dtype=patch.dtype, requires_grad=True)
         else:
-            empty_img = torch.full((3, self.image_size[0], self.image_size[1]), -1.0, device=patch.device, dtype=patch.dtype, requires_grad=True)
+            # Size the canvas to the processor's actual patch grid so it matches
+            # image_grid_thw. Qwen3-VL smart-resizes to multiples of patch_size*merge_size
+            # (32), which need not equal self.image_size (e.g. 336).
+            grid_t, grid_h, grid_w = image_grid_thw
+            canvas_patch = self.processor.image_processor.patch_size
+            canvas_h = int(grid_h) * canvas_patch
+            canvas_w = int(grid_w) * canvas_patch
+            empty_img = torch.full((3, canvas_h, canvas_w), -1.0, device=patch.device, dtype=patch.dtype, requires_grad=True)
 
         #patched_img = apply_patch_to_image( empty_img, patch, top, left)
 
@@ -232,7 +267,7 @@ class Qwen2Adapter(BaseModelAdapter):
 
     def compute_loss(self, target, patch, suffix='', custom_loss=True, print_probs=False):
 
-        input_ids, labels, pixel_values, image_grid_thw, attention_mask, weights = self.process_target(
+        input_ids, labels, pixel_values, image_grid_thw, attention_mask, weights, byte_frag = self.process_target(
             target['image'],
             target['text'] + suffix,
             target['target'],
@@ -267,8 +302,13 @@ class Qwen2Adapter(BaseModelAdapter):
             self.log_topk(outputs, labels)
 
         if custom_loss:
-            logits = outputs.logits 
-            loss = semantic_similarity_loss(logits, labels, embedding_matrix, weights = weights.unsqueeze(0), mode="attention", verbose=print_probs)
+            logits = outputs.logits
+            loss = semantic_similarity_loss(
+                logits, labels, embedding_matrix,
+                weights=weights.unsqueeze(0), mode="attention",
+                window=self.attn_window, byte_frag=byte_frag, frag_weight=self.frag_weight,
+                verbose=print_probs,
+            )
 
         else:
             logits = outputs.logits 

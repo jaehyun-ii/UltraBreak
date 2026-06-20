@@ -73,8 +73,16 @@ def total_variation(img):
 def main():
     device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
 
-    train_config = "./train_configs/test.csv"
-    qwen_adapter = Qwen2Adapter("Qwen/Qwen2-VL-7B-Instruct", patch_only=False)
+    train_config = "./train_configs/safebench_tiny_ko.csv"  # Korean few-shot training corpus
+    # Korean-tuned semantic loss:
+    #   attn_window=6  -> local causal attention (~one Korean 어절) so syllable-level
+    #                     tokens aggregate to word-level semantics without sentence drift.
+    #   frag_weight=0.2 -> down-weight UTF-8 byte-fragment ('�') target tokens (rare syllables).
+    # Set attn_window=None, frag_weight=1.0 to restore the original English behaviour.
+    qwen_adapter = Qwen2Adapter(
+        "Qwen/Qwen3-VL-8B-Instruct", patch_only=False,
+        attn_window=6, frag_weight=0.2,
+    )
 
     # optionally optimise against multiple surrogates; final method only uses one
     ensemble = [qwen_adapter]#, clip_adapter] #, llava_adapter]
