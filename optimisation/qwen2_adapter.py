@@ -83,10 +83,12 @@ class Qwen2Adapter(BaseModelAdapter):
         attention_mask = processed.get("attention_mask", None)
         pixel_values = processed["pixel_values"]
         image_grid_thw = processed['image_grid_thw']
+        # Qwen3-VL needs mm_token_type_ids (text=0 / image=1) for M-RoPE; Qwen2-VL doesn't return it.
+        mm_token_type_ids = processed.get("mm_token_type_ids", None)
 
         # input only
         if not target_text:
-            return input_ids, None, pixel_values, image_grid_thw, attention_mask
+            return input_ids, None, pixel_values, image_grid_thw, attention_mask, mm_token_type_ids
 
         target_lines = target_text.split('\n')
         #print(target_lines)
@@ -115,6 +117,11 @@ class Qwen2Adapter(BaseModelAdapter):
         target_attention = torch.ones_like(target_ids, device='cuda')  # All 1s for target tokens
         attention_mask = torch.cat([attention_mask, target_attention], dim=1)
 
+        # Extend mm_token_type_ids: appended target tokens are text -> 0 (Qwen3-VL)
+        if mm_token_type_ids is not None:
+            target_mm = torch.zeros_like(target_ids)
+            mm_token_type_ids = torch.cat([mm_token_type_ids, target_mm], dim=1)
+
 
         # Optionally compute manual weights for tokens: 0s for prompt, decreasing for target
         # note this is not used in the final method
@@ -139,7 +146,7 @@ class Qwen2Adapter(BaseModelAdapter):
             if tok_alpha and tok_alpha in keyword_blob:
                 weights[prompt_len + i] += 1.0
 
-        return input_ids, labels, pixel_values, image_grid_thw, attention_mask, weights, byte_frag
+        return input_ids, labels, pixel_values, image_grid_thw, attention_mask, weights, byte_frag, mm_token_type_ids
 
     def preprocess_patched(self, patched_tensor, image_grid_thw, temporal_patch_size=None, patch_size=None, merge_size=None):
         # Read patch geometry from the processor so this works across Qwen2-VL
@@ -267,7 +274,7 @@ class Qwen2Adapter(BaseModelAdapter):
 
     def compute_loss(self, target, patch, suffix='', custom_loss=True, print_probs=False):
 
-        input_ids, labels, pixel_values, image_grid_thw, attention_mask, weights, byte_frag = self.process_target(
+        input_ids, labels, pixel_values, image_grid_thw, attention_mask, weights, byte_frag, mm_token_type_ids = self.process_target(
             target['image'],
             target['text'] + suffix,
             target['target'],
@@ -286,11 +293,16 @@ class Qwen2Adapter(BaseModelAdapter):
             patched_imgs = self.apply_patch(pixel_values.unsqueeze(0), image_grid_thw[0], patch)
              
         
+        # Qwen3-VL requires mm_token_type_ids for M-RoPE; Qwen2/2.5-VL return None and ignore it.
+        extra = {}
+        if mm_token_type_ids is not None:
+            extra["mm_token_type_ids"] = mm_token_type_ids
         outputs = self.model(
             input_ids=input_ids,
             pixel_values=patched_imgs,
             image_grid_thw=image_grid_thw,
             attention_mask=attention_mask,
+            **extra,
         )
 
         if print_probs:

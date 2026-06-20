@@ -71,6 +71,12 @@ def total_variation(img):
     
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--max-steps", type=int, default=None,
+                        help="Stop after this many epochs (smoke test). Default: full run.")
+    args, _ = parser.parse_known_args()
+
     device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
 
     train_config = "./train_configs/safebench_tiny_ko.csv"  # Korean few-shot training corpus
@@ -106,7 +112,10 @@ def main():
     optimizer = optim.Adam([adv_patch], lr=lr) # tune the learning rate
 
     # Training loop
-    num_epochs = 5000 
+    num_epochs = 5000
+    if args.max_steps is not None:
+        num_epochs = min(num_epochs, base_epoch + args.max_steps)
+        print(f"[smoke test] limiting to {args.max_steps} epoch(s) -> num_epochs={num_epochs}")
     patience = 5000  # Number of epochs to wait before stopping
     best_loss = float('inf')
     best_img = None

@@ -17,10 +17,9 @@ services:
       context: .
       dockerfile: Dockerfile
     image: ultrabreak:latest
-    # Optional API keys for closed-source eval (GPT/Gemini/Claude); .env is optional.
-    env_file:
-      - path: .env
-        required: false
+    # Optional API keys for closed-source eval (GPT/Gemini/Claude): pass them with
+    #   docker compose --env-file .env run --rm ultrabreak ...
+    # (env_file is intentionally omitted here for compatibility with older Compose.)
     # The NVIDIA Container Toolkit reads NVIDIA_VISIBLE_DEVICES to decide which
     # physical GPUs are mounted into the container. Inside, they are renumbered
     # from 0 (so 4,5,6,7 appear as cuda:0..3).

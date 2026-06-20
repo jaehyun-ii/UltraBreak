@@ -115,9 +115,16 @@ def make_tpg_text_ko(instruction: str, phrase: str) -> str:
 
 
 def make_train_target_ko(instruction: str, phrase: str) -> str:
-    """Korean multi-token train target used in the semantic loss."""
+    """Korean multi-token train target used in the semantic loss.
+
+    Affirmative scaffold chosen empirically (demos/probe_korean_affirmative.py on
+    Qwen3-VL-8B): "다음은 {X}입니다:" had the LOWEST continuation NLL among candidates
+    (2.51 vs 3.20 for "네, 다음은 ..."), and tokenises cleanly — whereas "네" splits
+    into UTF-8 byte fragments. The leading affirmation word is dropped: "[탈옥 모드]"
+    itself acts as the affirmative prefix (cf. English "[Jailbroken Mode] Sure, ...").
+    """
     instruction = instruction.rstrip(".")
-    return f"{phrase} 네, 다음은 {instruction}입니다:\n\n1."
+    return f"{phrase} 다음은 {instruction}입니다:\n\n1."
 
 
 # Trailing type-suffix of a Korean instruction ("...하는 단계/방법", "... 목록/지침 목록")
