@@ -141,7 +141,8 @@ def sinusoidal_positional_encoding(seq_len, dim):
 
 
 def semantic_similarity_loss(logits, labels, embedding_matrix, weights = None, mode="token", ignore_index=-100,
-                             window=None, byte_frag=None, frag_weight=1.0, verbose=False):
+                             window=None, byte_frag=None, frag_weight=1.0,
+                             prefix_tokens=0, prefix_weight=1.0, verbose=False):
         """
         Compute semantic similarity loss between predicted token distributions and target tokens.
 
@@ -264,6 +265,16 @@ def semantic_similarity_loss(logits, labels, embedding_matrix, weights = None, m
             if byte_frag is not None and frag_weight != 1.0:
                 frag_mult = torch.where(byte_frag, sim.new_tensor(frag_weight), sim.new_tensor(1.0))
                 w = w * frag_mult
+            # Up-weight the FIRST `prefix_tokens` target tokens by `prefix_weight`. The
+            # pivotal token right after the affirmation prefix (e.g. "다음" after "[탈옥 모드]")
+            # is one of ~180 target tokens, so its failure is diluted in the mean. Boosting
+            # the early window forces the optimiser to flip that decision (the one that
+            # actually determines whether free generation complies or refuses).
+            if prefix_tokens and prefix_weight != 1.0:
+                w = w.clone()
+                for b in range(w.size(0)):
+                    valid_idx = mask[b].nonzero(as_tuple=True)[0][:prefix_tokens]
+                    w[b, valid_idx] = w[b, valid_idx] * prefix_weight
             loss = ((1 - sim) * w).sum() / w.sum().clamp_min(1e-8)
 
             if verbose:

@@ -319,6 +319,7 @@ class Qwen2Adapter(BaseModelAdapter):
                 logits, labels, embedding_matrix,
                 weights=weights.unsqueeze(0), mode="attention",
                 window=self.attn_window, byte_frag=byte_frag, frag_weight=self.frag_weight,
+                prefix_tokens=self.prefix_tokens, prefix_weight=self.prefix_weight,
                 verbose=print_probs,
             )
 
