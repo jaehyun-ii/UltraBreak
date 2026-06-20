@@ -88,6 +88,11 @@ def main():
     qwen_adapter = Qwen2Adapter(
         "Qwen/Qwen3-VL-8B-Instruct", patch_only=False,
         attn_window=6, frag_weight=0.2,
+        # Qwen3-VL requires the image side to be a multiple of patch_size*merge_size
+        # (16*2=32). The Qwen2 default 336 smart-resizes down to 320, which is smaller
+        # than a 224 patch's max augmented size (~330) -> "patch too large". 352 (=32*11)
+        # is kept as-is and leaves room for scale(0.8-1.2)/rotation(±15°) augmentation.
+        image_size=(352, 352),
     )
 
     # optionally optimise against multiple surrogates; final method only uses one
