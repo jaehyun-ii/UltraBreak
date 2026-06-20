@@ -1,7 +1,8 @@
 # adapters/base_adapter.py
 class BaseModelAdapter:
     def __init__(self,  model_id, device='cuda', image_size=(336, 336), patch_size=(224, 224), patch_only=True, optimise_text=False,
-                 attn_window=None, frag_weight=1.0, prefix_tokens=0, prefix_weight=1.0):
+                 attn_window=None, frag_weight=1.0, prefix_tokens=0, prefix_weight=1.0,
+                 suffix_tokens=0, suffix_weight=1.0):
         self.device = device
         self.model_id = model_id
         self.processor, self.model = self.load(model_id)
@@ -17,6 +18,10 @@ class BaseModelAdapter:
         # by `prefix_weight` in the semantic loss. Defaults (0 / 1.0) = no-op.
         self.prefix_tokens = prefix_tokens
         self.prefix_weight = prefix_weight
+        # Up-weight the last `suffix_tokens` target tokens (the predicate/list-start pivot
+        # for Korean topic-first targets). Defaults (0 / 1.0) = no-op.
+        self.suffix_tokens = suffix_tokens
+        self.suffix_weight = suffix_weight
         #self.img_root = img_root
 
     def load(self, model_id):

@@ -142,7 +142,8 @@ def sinusoidal_positional_encoding(seq_len, dim):
 
 def semantic_similarity_loss(logits, labels, embedding_matrix, weights = None, mode="token", ignore_index=-100,
                              window=None, byte_frag=None, frag_weight=1.0,
-                             prefix_tokens=0, prefix_weight=1.0, verbose=False):
+                             prefix_tokens=0, prefix_weight=1.0,
+                             suffix_tokens=0, suffix_weight=1.0, verbose=False):
         """
         Compute semantic similarity loss between predicted token distributions and target tokens.
 
@@ -275,6 +276,15 @@ def semantic_similarity_loss(logits, labels, embedding_matrix, weights = None, m
                 for b in range(w.size(0)):
                     valid_idx = mask[b].nonzero(as_tuple=True)[0][:prefix_tokens]
                     w[b, valid_idx] = w[b, valid_idx] * prefix_weight
+            # Up-weight the LAST `suffix_tokens` target tokens. For a Korean topic-first
+            # target ("{X}는 다음과 같습니다:\n\n1.") the comply-vs-refuse pivot is the
+            # predicate at the END ("다음과 같습니다" vs the model's preferred "법적으로 금지"),
+            # so the suffix carries the decisive — and naturally hardest — positions.
+            if suffix_tokens and suffix_weight != 1.0:
+                w = w.clone()
+                for b in range(w.size(0)):
+                    valid_idx = mask[b].nonzero(as_tuple=True)[0][-suffix_tokens:]
+                    w[b, valid_idx] = w[b, valid_idx] * suffix_weight
             loss = ((1 - sim) * w).sum() / w.sum().clamp_min(1e-8)
 
             if verbose:
