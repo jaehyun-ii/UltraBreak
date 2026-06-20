@@ -87,19 +87,19 @@ def main():
     #                     tokens aggregate to word-level semantics without sentence drift.
     #   frag_weight=0.2 -> down-weight UTF-8 byte-fragment ('�') target tokens (rare syllables).
     # Set attn_window=None, frag_weight=1.0 to restore the original English behaviour.
+    # Surrogate: Qwen2.5-VL-7B-Instruct (less aligned than Qwen3-VL-8B, which hit the
+    # method's ceiling in Korean). NOTE the paper's actual surrogate is Qwen2-VL-7B-Instruct
+    # (Qwen2.5-VL was a black-box TARGET there) — swap the id below for paper-faithful.
     qwen_adapter = Qwen2Adapter(
-        "Qwen/Qwen3-VL-8B-Instruct", patch_only=False,
+        "Qwen/Qwen2.5-VL-7B-Instruct", patch_only=False,
         attn_window=6, frag_weight=0.2,
         prefix_tokens=0, prefix_weight=1.0,
         # TOPIC-FIRST pivot is the PREDICATE at the end ("다음과 같습니다:\n\n1."): the model
-        # wants "법적으로 금지" there instead. Up-weight the last ~8 target tokens to force
-        # that flip (the SOV-aligned analogue of the earlier first-token prefix weighting).
+        # wants "법적으로 금지" there instead. Up-weight the last ~8 target tokens to force it.
         suffix_tokens=8, suffix_weight=8.0,
-        # Qwen3-VL requires the image side to be a multiple of patch_size*merge_size
-        # (16*2=32). The Qwen2 default 336 smart-resizes down to 320, which is smaller
-        # than a 224 patch's max augmented size (~330) -> "patch too large". 352 (=32*11)
-        # is kept as-is and leaves room for scale(0.8-1.2)/rotation(±15°) augmentation.
-        image_size=(352, 352),
+        # Qwen2/2.5-VL use patch_size*merge_size = 14*2 = 28; 336 (=28*12) is valid and
+        # leaves room for a 224 patch's ~330 max augmented size. (Qwen3-VL needs 352.)
+        image_size=(336, 336),
     )
 
     # optionally optimise against multiple surrogates; final method only uses one
