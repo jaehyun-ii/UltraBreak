@@ -32,15 +32,22 @@ fi
 cp -f "$CKPT" outputs/ultrabreak.png
 echo "[run_ckpt_eval] evaluating $CKPT  (model=$MODEL  config=$ATTACK_CONFIG)"
 
-# 1) target generates responses -> results/<config>/<model>.csv
+# Tag every artifact by the checkpoint so evaluating several patches in a row
+# does NOT clobber earlier results (attack.py always writes the same fixed path).
+TAG="$(echo "${CKPT%.*}" | tr '/' '_')"   # e.g. outputs_test_4700 / outputs_image
+
+# 1) target generates responses -> results/<config>/<model>.csv (fixed path)
 python evaluation/attack.py \
   --model_name "$MODEL" \
   --attack_config "$ATTACK_CONFIG"
 
-RESULT="results/${ATTACK_CONFIG}/${MODEL}.csv"
+FIXED="results/${ATTACK_CONFIG}/${MODEL}.csv"
+RESULT="results/${ATTACK_CONFIG}/${MODEL}__${TAG}.csv"
+cp -f "$FIXED" "$RESULT"
 echo "[run_ckpt_eval] attack responses -> $RESULT"
 
 # 2) judge -> ASR / NRR (writes <RESULT>_harmbench.csv, prints the metrics)
+echo "[run_ckpt_eval] ===== METRICS for $CKPT ====="
 python evaluation/evaluate.py --attack_result "$RESULT"
 
 echo "[run_ckpt_eval] done. Re-read the 'ASR' / 'Non-Refusal Rate' lines above."
